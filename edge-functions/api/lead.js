@@ -41,12 +41,10 @@ function validateLead(input) {
     phone: clean(input.phone, 24),
     scenario: clean(input.scenario, 30),
     message: clean(input.message, 800),
-    website: clean(input.website, 200),
     source: clean(input.source, 500),
     requestId: clean(input.requestId, 80),
   };
 
-  if (lead.website) return { bot: true };
   if (!lead.company || !lead.name || !lead.phone || !lead.scenario) {
     return { error: "请填写公司、姓名、联系电话和场景类型。" };
   }
@@ -199,7 +197,6 @@ async function handlePost(context) {
     }
 
     const validation = validateLead(input);
-    if (validation.bot) return json({ ok: true });
     if (validation.error) return json({ ok: false, message: validation.error }, 400);
 
     const token = await getTenantAccessToken(env);
