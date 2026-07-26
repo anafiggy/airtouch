@@ -34,6 +34,34 @@ function clean(value, maxLength) {
     .slice(0, maxLength);
 }
 
+function envValue(env, name) {
+  let value = String(env?.[name] ?? "").trim();
+  const isQuoted =
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"));
+  if (isQuoted) value = value.slice(1, -1).trim();
+  return value;
+}
+
+function diagnoseSubmissionError(error) {
+  const raw = String(error);
+  const match = raw.match(/(?:Error:\s*)?(token|bitable):([^:]+):/);
+  if (!match) {
+    return {
+      errorCode: "LEAD_SUBMISSION_FAILED",
+      providerCode: "unknown",
+    };
+  }
+
+  return {
+    errorCode:
+      match[1] === "token"
+        ? "FEISHU_AUTH_FAILED"
+        : "FEISHU_BITABLE_WRITE_FAILED",
+    providerCode: clean(match[2], 40),
+  };
+}
+
 function validateLead(input) {
   const lead = {
     company: clean(input.company, 80),
@@ -65,8 +93,8 @@ async function getTenantAccessToken(env) {
       method: "POST",
       headers: { "Content-Type": "application/json; charset=utf-8" },
       body: JSON.stringify({
-        app_id: env.FEISHU_APP_ID,
-        app_secret: env.FEISHU_APP_SECRET,
+        app_id: envValue(env, "FEISHU_APP_ID"),
+        app_secret: envValue(env, "FEISHU_APP_SECRET"),
       }),
     },
   );
@@ -78,8 +106,8 @@ async function getTenantAccessToken(env) {
 }
 
 async function createBitableRecord(env, token, lead) {
-  const appToken = encodeURIComponent(env.FEISHU_BITABLE_APP_TOKEN);
-  const tableId = encodeURIComponent(env.FEISHU_TABLE_ID);
+  const appToken = encodeURIComponent(envValue(env, "FEISHU_BITABLE_APP_TOKEN"));
+  const tableId = encodeURIComponent(envValue(env, "FEISHU_TABLE_ID"));
   const response = await fetch(
     `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records`,
     {
@@ -150,12 +178,13 @@ async function notifyGroup(env, lead) {
     },
   };
 
-  if (env.FEISHU_WEBHOOK_SECRET) {
+  const webhookSecret = envValue(env, "FEISHU_WEBHOOK_SECRET");
+  if (webhookSecret) {
     body.timestamp = timestamp;
-    body.sign = await createWebhookSignature(env.FEISHU_WEBHOOK_SECRET, timestamp);
+    body.sign = await createWebhookSignature(webhookSecret, timestamp);
   }
 
-  const response = await fetch(env.FEISHU_WEBHOOK_URL, {
+  const response = await fetch(envValue(env, "FEISHU_WEBHOOK_URL"), {
     method: "POST",
     headers: { "Content-Type": "application/json; charset=utf-8" },
     body: JSON.stringify(body),
@@ -174,9 +203,22 @@ async function handlePost(context) {
   const requestId = request.headers.get("x-request-id") || crypto.randomUUID();
 
   try {
-    if (REQUIRED_ENV.some((name) => !env[name])) {
-      console.error("[lead] missing_environment", { requestId });
-      return json({ ok: false, message: "服务暂未配置完成。" }, 503);
+    const missingEnvironment = REQUIRED_ENV.filter((name) => !envValue(env, name));
+    if (missingEnvironment.length) {
+      console.error(
+        "[lead] missing_environment",
+        JSON.stringify({ requestId, missingEnvironment }),
+      );
+      return json(
+        {
+          ok: false,
+          message: "服务暂未配置完成。",
+          errorCode: "MISSING_ENVIRONMENT",
+          missingEnvironment,
+          requestId,
+        },
+        503,
+      );
     }
 
     const origin = request.headers.get("Origin");
@@ -216,11 +258,24 @@ async function handlePost(context) {
 
     return json({ ok: true, notified });
   } catch (error) {
-    console.error("[lead] submission_failed", {
-      requestId,
-      error: String(error),
-    });
-    return json({ ok: false, message: "暂时未能提交，请稍后重试。" }, 502);
+    const diagnostic = diagnoseSubmissionError(error);
+    console.error(
+      "[lead] submission_failed",
+      JSON.stringify({
+        requestId,
+        ...diagnostic,
+        error: String(error),
+      }),
+    );
+    return json(
+      {
+        ok: false,
+        message: "暂时未能提交，请稍后重试。",
+        ...diagnostic,
+        requestId,
+      },
+      502,
+    );
   }
 }
 
