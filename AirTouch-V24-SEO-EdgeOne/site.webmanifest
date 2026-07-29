@@ -1,0 +1,15 @@
+{
+  "name": "AirTouch 触碰无限",
+  "short_name": "AirTouch",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fbfafe",
+  "theme_color": "#5b2fd3",
+  "icons": [
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}
